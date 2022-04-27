@@ -9,16 +9,16 @@ library(rvest)
 
 # ####Get Voting Data for Missouri####
 ##Precinct Level
-full_precinct_data <- fread("data-raw/2020-PRESIDENT-precinct-general.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE)
+#full_precinct_data <- fread("data-raw/2020-PRESIDENT-precinct-general.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE)
 mo_precinct_data <- fread("data-raw/2020-mo-precinct-general.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE)
 
 ##Clean Precinct Data
-full_precinct_data_clean <-
-  full_precinct_data %>%
-  clean_names() %>%
-  mutate_all(~na_if(., "")) %>%
-  filter(office == "US PRESIDENT",
-         state == "MISSOURI")
+# full_precinct_data_clean <-
+#   full_precinct_data %>%
+#   clean_names() %>%
+#   mutate_all(~na_if(., "")) %>%
+#   filter(office == "US PRESIDENT",
+#          state == "MISSOURI")
 rm(full_precinct_data)
 mo_precinct_data_clean <-
   mo_precinct_data %>%
@@ -82,6 +82,18 @@ covid_data_clean <-
   filter(is.na(fips) == FALSE) %>% 
   rename("county_name" = "county")
 
+
+####Combine Data####
+##Combine Voter Data w/ COVID Data
+covid_vtd_data_combined <- 
+  vtd_data_full %>% 
+  left_join(covid_data_clean, by = "fips") %>% 
+  relocate("county_name", .after = "basename") %>% 
+  mutate(county_name = 
+           county_name %>% 
+           str_replace_all("St. Louis city", "St. Louis City"))
+
+
 ####Assign Mask Mandate Status####
 mask_mandate_data <- 
   data.frame(county_name = c("Adair", "Andrew", "Boone", "Taney", "Stone", "Cape Girardeau", "Clay", "Clinton",
@@ -134,6 +146,11 @@ mask_mandate_data_full <-
   arrange(county_name) %>% 
   unique()
 
+mask_mandate_data_full <- 
+  mask_mandate_data_full %>%
+  bind_rows(data.frame(county_name = setdiff(unique(covid_vtd_data_combined$county_name), unique(mask_mandate_data_full$county_name)),
+                       mask_mandate_effective_date = NA, whole_county_mask_mandate = 0, county_seat_mask_mandate =  0))
+
 mask_mandate_data_full_county <- 
   mask_mandate_data_full %>% 
   filter(whole_county_mask_mandate == 1) %>% 
@@ -143,29 +160,42 @@ mask_mandate_county_seat <-
   mask_mandate_data_full %>% 
   filter(county_seat_mask_mandate == 1) %>% 
   select(-whole_county_mask_mandate)
-  
 
-####Combine Data####
-##Combine Voter Data w/ COVID Data
-covid_vtd_data_combined <- 
-  vtd_data_full %>% 
-  left_join(covid_data_clean, by = "fips") %>% 
-  relocate("county_name", .after = "basename") %>% 
+mask_mandate_data_total <- 
+  mask_mandate_data_full_county %>% 
+  full_join(mask_mandate_county_seat, by = c("county_name", "mask_mandate_effective_date")) %>% 
+  mutate(county_seat_mask_mandate = replace_na(county_seat_mask_mandate, 0), 
+         whole_county_mask_mandate = replace_na(whole_county_mask_mandate, 0),
+         county_seat_mask_mandate = ifelse(whole_county_mask_mandate == 1, 1, county_seat_mask_mandate)) %>% 
+  arrange(county_name) %>% 
+  filter(!(county_name == "Jackson" & whole_county_mask_mandate == 0))
+
+
+####County Population Data####
+mo_county_pops <- 
+  "data-raw/co-est2021-alldata.csv" %>% 
+  fread(stringsAsFactors = FALSE, sep = ",", header = TRUE) %>% 
+  clean_names() %>% 
+  filter(stname == "Missouri") %>% 
   mutate(county_name = 
-           county_name %>% 
-           str_replace_all("St. Louis city", "St. Louis City"))
+           ctyname %>% 
+           str_replace_all(" County", "") %>% 
+           str_replace_all("city", "City")) %>% 
+  filter(ctyname != "Missouri") %>% 
+  select(county_name, popestimate2020)
 
-##Combine Data w/ Mask Mandate Data
+
+##Combine Data w/ Mask Mandate Data and County Population Data
 mo_data_full <- 
   covid_vtd_data_combined %>% 
-  left_join(mask_mandate_data_full_county, by = "county_name") %>% 
-  left_join(mask_mandate_county_seat, by = "county_name") %>% 
+  left_join(mask_mandate_data_total, by = "county_name") %>%
   mutate(full_county_mask_mandate_pre_election = 
-           ifelse(mask_mandate_effective_date.x <= "2020-11-03" & whole_county_mask_mandate == 1, 1, 0),
+           ifelse(mask_mandate_effective_date <= "2020-11-03" & whole_county_mask_mandate == 1, 1, 0),
          county_seat_mask_mandate_pre_election = 
-           ifelse(mask_mandate_effective_date.y <= "2020-11-03" & county_seat_mask_mandate == 1, 1, 0)) %>% 
+           ifelse(mask_mandate_effective_date <= "2020-11-03" & county_seat_mask_mandate == 1, 1, 0)) %>% 
   select(-starts_with("mask_mandate_effective_date")) %>% 
-  mutate_at(vars(contains("mask_mandate")), ~replace_na(.x, 0))
+  mutate_at(vars(contains("mask_mandate")), ~replace_na(.x, 0)) %>% 
+  left_join(mo_county_pops, by = "county_name")
 
 
 ####Write Final Dataset####
