@@ -106,7 +106,11 @@ summary(fit7)
 
 anova67 <- anova(fit6, fit7)
 anova67
-  ##Not sure County Seat Mask mandate is necessarily useful
+  ##Not sure Full County Mask mandate is necessarily useful.
+
+  ##Full County Mask Mandate is entirely reflected in county seat mask mandate 
+  ##(if a county has a mask mandate, obviously the county seat will also have that mask mandate).
+  ##For this reason, we see that county mask mandate is a more effective and useful variable to include in the models.
 
 ##Adding COVID Data
 fit8 <- glmer(g20201103_pct_voted_all ~ 
@@ -144,8 +148,8 @@ anova910
 fit11 <- glmer(g20201103_pct_voted_all ~ 
                 pp20200310_pct_voted_all + g20161108_pct_voted_all + 
                 g20121106_pct_voted_all + county_seat_mask_mandate_pre_election + 
-                `cases_rollmean_7_2020-11-03` + party_rep + party_dem + eth1_eur + 
-                eth1_hisp + eth1_aa + eth1_esa + eth1_oth + (1|county_name), 
+                `cases_rollmean_7_2020-11-03` + party_rep + party_dem + eth1_unk + 
+                eth1_hisp + eth1_aa + eth1_esa + eth1_oth + eth1_eur + (1|county_name), 
               weights = total_reg, data = missouri_data_clean, family = binomial)
 print(summary(fit11), correlation = TRUE)
 
@@ -163,7 +167,7 @@ summary(fit12)
 outcome_var_viz <- 
   missouri_data_clean %>% 
   ggplot(aes(x = g20201103_pct_voted_all)) + 
-  geom_histogram() + 
+  geom_histogram(color = "green") + 
   labs(title = "Voter Turnout in 2020 Presidential Election in Missouri by Voting Precinct") + 
   xlab("Voter Turnout") + 
   ylab("Count")
