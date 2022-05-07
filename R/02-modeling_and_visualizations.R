@@ -85,6 +85,11 @@ unconditional_means_model <- glmer(g20201103_pct_voted_all ~ (1|county_name),
                                    weights = total_reg, data = missouri_data_clean, family = binomial)
 summary(unconditional_means_model)
 
+##Unconditional Means Model for ethnicity Data
+umm_ethnicity <- glmer(g20201103_pct_voted_all_eth ~ (1|county_name/basename) + (1|ethnicity), 
+                       weights = g20201103_reg_all_eth, data = missouri_data_clean_long_eth, family = binomial)
+summary(umm_ethnicity)
+
 ##Just Mask Mandate and Random Effects
 fit1 <- glmer(g20201103_pct_voted_all ~ 
                 full_county_mask_mandate_pre_election + (1|county_name), 
@@ -196,7 +201,6 @@ fit12 <- glmer(g20201103_pct_voted_all ~
 summary(fit12)
 anova1112 <- anova(fit11, fit12)
 anova1112
-
 
 ##Model w/ Just Mask Mandate and Random Effect
 fit13 <- glmer(g20201103_pct_voted_all ~ county_seat_mask_mandate_pre_election + (1|county_name), 
