@@ -10,6 +10,7 @@ library(usmap)
 library(rgdal)
 library(mapproj)
 library(maps)
+library(stargazer)
 
 
 ####Read in Data####
@@ -47,7 +48,35 @@ missouri_data_clean <-
   mutate_at(vars(starts_with("party")), ~.x/total_reg) %>%
 
 ##Convert Counts of Registered Voters from Different Racial/Ethnic Groups to Percentages
-  mutate_at(vars(starts_with("eth1")), ~.x/total_reg)
+  mutate_at(vars(starts_with("eth1")), ~.x/total_reg) %>% 
+  mutate(party_oth = party_oth + party_npp + party_unk)
+
+missouri_data_clean_long_eth <- 
+  missouri_data_clean %>% 
+  pivot_longer(cols = c(starts_with("g20201103_pct_voted_"), starts_with("g20201103_reg_")),
+               names_to = "ethnicity",
+               values_to = "g20201103_pct_and_reg_eth") %>% 
+  mutate(ethnicity = 
+           ethnicity %>% 
+           str_replace_all("g20201103_", "") %>% 
+           str_replace_all("pct_voted", "pctvtd")) %>% 
+  separate(ethnicity, into = c("vote_type", "ethnicity"), sep = "_") %>% 
+  mutate(vote_type = 
+           vote_type %>% 
+           str_replace_all("pctvtd", "g20201103_pct_voted_all_eth") %>% 
+           str_replace_all("reg", "g20201103_reg_all_eth")) %>% 
+  pivot_wider(names_from = "vote_type", 
+              values_from = "g20201103_pct_and_reg_eth") %>%
+  filter(ethnicity != "all") %>%
+  mutate(ethnicity = case_when(ethnicity == "eur" ~ "White",
+                               ethnicity == "hisp" ~ "Hispanic",
+                               ethnicity == "aa" ~ "Black/African American",
+                               ethnicity == "esa" ~ "East and South Asian",
+                               ethnicity == "oth" ~ "Other", 
+                               ethnicity == "unk" ~ "Unknown", 
+                               TRUE ~ "NA")) %>% 
+  mutate(ethnicity = na_if(ethnicity, "NA")) %>% 
+  mutate_if(is_numeric, ~replace_na(., 0))
 
 
 ####Build Models####
@@ -156,10 +185,33 @@ print(summary(fit11), correlation = TRUE)
 anova1011 <- anova(fit10, fit11)
 anova1011
 
-##Model w/ Just Mask Mandate and Random Effect
-fit12 <- glmer(g20201103_pct_voted_all ~ county_seat_mask_mandate_pre_election + (1|county_name), 
+##Add Vote Type
+fit12 <- glmer(g20201103_pct_voted_all ~ 
+                 pp20200310_pct_voted_all + g20161108_pct_voted_all + 
+                 g20121106_pct_voted_all + county_seat_mask_mandate_pre_election + 
+                 `cases_rollmean_7_2020-11-03` + party_rep + party_dem + party_oth + 
+                 eth1_unk + eth1_hisp + eth1_aa + eth1_esa + eth1_oth + eth1_eur +
+                 election_day_perc + absentee_perc + (1|county_name), 
                weights = total_reg, data = missouri_data_clean, family = binomial)
 summary(fit12)
+anova1112 <- anova(fit11, fit12)
+anova1112
+
+
+##Model w/ Just Mask Mandate and Random Effect
+fit13 <- glmer(g20201103_pct_voted_all ~ county_seat_mask_mandate_pre_election + (1|county_name), 
+               weights = total_reg, data = missouri_data_clean, family = binomial)
+summary(fit13)
+
+##Change Data and Add Ethnicity Random Effect
+fit14 <- glmer(g20201103_pct_voted_all_eth ~ 
+                 pp20200310_pct_voted_all + g20161108_pct_voted_all + 
+                 g20121106_pct_voted_all + county_seat_mask_mandate_pre_election + 
+                 `cases_rollmean_7_2020-11-03` + party_dem + party_oth + party_rep + 
+                 election_day_perc + absentee_perc  + (1|county_name/basename) + (1|ethnicity), 
+               weights = g20201103_reg_all_eth, data = missouri_data_clean_long_eth, family = binomial)
+summary(fit14)
+
 
 
 ####Visualizations####
@@ -184,6 +236,7 @@ missouri_county_df <-
   dplyr::summarize(pop100 = sum(pop100, na.rm = TRUE),
                    g20201103_voted_all = sum(g20201103_voted_all, na.rm = TRUE),
                    total_reg = sum(total_reg, na.rm = TRUE)) %>% 
+  ungroup() %>%
   mutate(voter_turnout = g20201103_voted_all/total_reg, 
          total_reg_perc = total_reg/popestimate2020) %>% 
   left_join(missouri_county_shp %>% 
@@ -192,8 +245,7 @@ missouri_county_df <-
               mutate(fips = as.numeric(fips)),
             by = "fips") %>% 
   rename("cases_rollmean_7" = "cases_rollmean_7_2020-11-03",
-         "deaths_rollmean_7" = "deaths_rollmean_7_2020-11-03") %>% 
-  ungroup()
+         "deaths_rollmean_7" = "deaths_rollmean_7_2020-11-03")
 
 ##Read VTD Shapefiles
 missouri_vtd_shp <- readOGR("data-raw/mo_vtd_2020_bound/mo_vtd_2020_bound.shp")
@@ -295,16 +347,48 @@ vtd_reg_vote_perc_plot
 ggsave("plots/vtd/vtd_reg_vote_perc_plot.pdf", vtd_reg_vote_perc_plot, width = 11, height = 6)
 
 
+####Descriptive Statistics####
+##Race Composition of Missouri
+race_comp_mo <- 
+  missouri_data_clean %>% 
+  select(county_name, basename, total_reg, starts_with("eth1_")) %>% 
+  mutate_at(vars(starts_with("eth1_")), ~.x*total_reg) %>% 
+  pivot_longer(cols = starts_with("eth1_"),
+               names_to = "eth",
+               values_to = "votes_by_eth") %>% 
+  group_by(eth) %>% 
+  dplyr::summarize(votes_by_eth = sum(votes_by_eth, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(total_vote = sum(votes_by_eth, na.rm = TRUE),
+         perc_eth = votes_by_eth/total_vote)
 
+##Political Composition in Missouri
+party_comp_mo <- 
+  missouri_data_clean %>% 
+  select(county_name, basename, total_reg, starts_with("party_")) %>% 
+  mutate_at(vars(starts_with("party_")), ~.x*total_reg) %>% 
+  pivot_longer(cols = starts_with("party_"),
+               names_to = "party",
+               values_to = "votes_by_party") %>% 
+  group_by(party) %>% 
+  dplyr::summarize(votes_by_party = sum(votes_by_party, na.rm = TRUE)) %>% 
+  ungroup() %>%
+  mutate(votes_by_party_perc = votes_by_party/sum(votes_by_party))
 
-
-
-
-
-
-
-
-
+##Stargazer Table of Fit 14
+# stargazer(fit14, type = "html", flip = TRUE, out = "output/fit14.html", summary = TRUE)
+# tab_model(fit14, fit12, 
+#           showHeaderStrings = TRUE,
+#           stringB = "Estimate",
+#           stringCI = "Conf. Int.",
+#           stringP = "p-value",
+#           stringDependentVariables = "Response",
+#           stringPredictors = "Coefficients",
+#           labelDependentVariables = c("Voter Turnout",
+#                                       "Voter Turnout"),
+#           file = "output/fit14_fit12.html")
+tab_model(fit14, fit12, file = "output/fit14_fit12.html", show.aic = TRUE, show.dev = TRUE, show.r2 = FALSE)
+tab_model(fit14, fit12, file = "output/fit14_fit12_original.html", transform = NULL, show.aic = TRUE, show.r2 = FALSE)
 
 
 

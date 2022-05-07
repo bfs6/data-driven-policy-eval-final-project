@@ -197,9 +197,44 @@ mo_data_full <-
   mutate_at(vars(contains("mask_mandate")), ~replace_na(.x, 0)) %>% 
   left_join(mo_county_pops, by = "county_name")
 
+##Add Mode of Election
+mode_election <- 
+  mo_precinct_data_clean %>% 
+  filter(office == "US PRESIDENT") %>% 
+  group_by(mode, county_name, county_fips) %>% 
+  dplyr::summarize(votes = sum(votes, na.rm = TRUE)) %>% 
+  mutate_all(~replace_na(., 0)) %>%
+  group_by(county_fips) %>%
+  mutate(total_vote = sum(votes, na.rm = TRUE),
+         perc = votes/total_vote) %>%
+  ungroup() %>%
+  distinct() %>%
+  select(-c(votes, total_vote)) %>%
+  pivot_wider(names_from = "mode",
+              values_from = "perc",
+              names_glue = "{mode}_{.value}") %>% 
+  clean_names() %>%
+  mutate_if(is.numeric, ~replace_na(., 0)) %>% 
+  select(c(ends_with("_perc"), county_fips)) %>% 
+  rename("fips" = "county_fips")
+# in_person_votes <- 
+#   mo_precinct_data_clean %>% 
+#   filter(office == "US PRESIDENT",
+#          mode == "ELECTION DAY") %>% 
+#   group_by(county_name, county_fips) %>% 
+#   dplyr::summarize(votes = sum(votes, na.rm = TRUE)) %>% 
+#   mutate_all(~replace_na(., 0)) %>% 
+#   ungroup() %>%
+#   select(-county_name) %>% 
+#   rename("in_person_votes" = "votes",
+#          "fips" = "county_fips")
+mo_data_full_final <- 
+  mo_data_full %>% 
+  left_join(mode_election, by = "fips") 
+
 
 ####Write Final Dataset####
-fwrite(mo_data_full, "data/missouri_data_clean.csv", row.names = FALSE)
+fwrite(mo_data_full_final, "data/missouri_data_clean.csv", row.names = FALSE)
 
 
 
