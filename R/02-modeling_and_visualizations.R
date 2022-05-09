@@ -11,6 +11,7 @@ library(rgdal)
 library(mapproj)
 library(maps)
 library(stargazer)
+library(sjPlot)
 
 
 ####Read in Data####
@@ -24,32 +25,28 @@ missouri_data_clean <-
   mutate(g20161108_pct_voted_all = g20161108/total_reg,
          g20121106_pct_voted_all = g20121106/total_reg) %>% 
   
-##7-Day Moving Averages for COVID
-  pivot_longer(cols = c(starts_with("cases"), starts_with("deaths")),
-               names_to = c("covid_type", "dates"),
-               names_pattern = "(.*)_(.*)",
-               values_to = "covid_counts") %>% 
-  pivot_wider(names_from = "covid_type",
-              values_from = "covid_counts") %>% 
-  group_by(basename) %>%
-  arrange(county_name, basename, dates) %>%
-  mutate(cases_rollmean_7 = rollmeanr(cases, k = 7, fill = NA),
-         deaths_rollmean_7 = rollmeanr(deaths, k = 7, fill = NA)) %>% 
-  ungroup() %>% 
-  mutate(cases_rollmean_7 = cases_rollmean_7/(popestimate2020/100),
-         deaths_rollmean_7 = deaths_rollmean_7/(popestimate2020/100)) %>% 
-  filter(dates >= "2020-11-01") %>% 
-  select(-c(cases, deaths)) %>%
-  pivot_wider(names_from = dates,
-              names_glue = "{.value}_{dates}",
-              values_from = c(cases_rollmean_7, deaths_rollmean_7)) %>%
+##Regularize 7-Day Moving Averages for COVID
+  mutate_at(vars(c(starts_with("cases_rollmean_7"), starts_with("deaths_rollmean_7"))), 
+            ~.x/(popestimate2020/100)) %>% 
 
 ##Convert Counts of Registered Voters from Each Party to Percentages
   mutate_at(vars(starts_with("party")), ~.x/total_reg) %>%
 
 ##Convert Counts of Registered Voters from Different Racial/Ethnic Groups to Percentages
   mutate_at(vars(starts_with("eth1")), ~.x/total_reg) %>% 
-  mutate(party_oth = party_oth + party_npp + party_unk)
+  mutate(party_oth = party_oth + party_npp + party_unk) %>%
+  
+##Add Age Predictors
+  mutate(age_18_24 = age_18_19 + age_20_24,
+         age_25_34 = age_25_29 + age_30_34,
+         age_35_54 = age_35_44 + age_45_54, 
+         age_55_64 = age_55_64,
+         age_65_plus = age_65_74 + age_75_84,
+         total_reg_age = age_18_24 + age_25_34 + age_35_54 + age_55_64 + age_65_plus) %>% 
+  mutate_at(vars(starts_with("age")), ~.x/total_reg_age) %>% 
+  select(-total_reg_age)
+  
+  
 
 missouri_data_clean_long_eth <- 
   missouri_data_clean %>% 
@@ -194,13 +191,24 @@ anova1011
 fit12 <- glmer(g20201103_pct_voted_all ~ 
                  pp20200310_pct_voted_all + g20161108_pct_voted_all + 
                  g20121106_pct_voted_all + county_seat_mask_mandate_pre_election + 
-                 `cases_rollmean_7_2020-11-03` + party_rep + party_dem + party_oth + 
-                 eth1_unk + eth1_hisp + eth1_aa + eth1_esa + eth1_oth + eth1_eur +
-                 election_day_perc + absentee_perc + (1|county_name), 
+                 `cases_rollmean_7_2020-11-03` + party_dem + party_oth + party_rep +
+                 eth1_unk + eth1_hisp + eth1_aa + eth1_esa + eth1_oth + eth1_eur + (1|county_name), 
                weights = total_reg, data = missouri_data_clean, family = binomial)
 summary(fit12)
 anova1112 <- anova(fit11, fit12)
 anova1112
+
+##Add Age
+fit12_2 <- glmer(g20201103_pct_voted_all ~ 
+                   pp20200310_pct_voted_all + g20161108_pct_voted_all + 
+                   g20121106_pct_voted_all + county_seat_mask_mandate_pre_election + 
+                   `cases_rollmean_7_2020-11-03` + party_dem + party_oth + party_rep +
+                   eth1_unk + eth1_hisp + eth1_aa + eth1_esa + eth1_oth + eth1_eur + 
+                   age_25_34 + age_35_54 + age_55_64 + age_65_plus + age_18_24 + (1|county_name), 
+                 weights = total_reg, data = missouri_data_clean, family = binomial)
+summary(fit12_2)
+anova12 <- anova(fit12, fit12_2)
+anova12
 
 ##Model w/ Just Mask Mandate and Random Effect
 fit13 <- glmer(g20201103_pct_voted_all ~ county_seat_mask_mandate_pre_election + (1|county_name), 
@@ -212,7 +220,7 @@ fit14 <- glmer(g20201103_pct_voted_all_eth ~
                  pp20200310_pct_voted_all + g20161108_pct_voted_all + 
                  g20121106_pct_voted_all + county_seat_mask_mandate_pre_election + 
                  `cases_rollmean_7_2020-11-03` + party_dem + party_oth + party_rep + 
-                 election_day_perc + absentee_perc  + (1|county_name/basename) + (1|ethnicity), 
+                 absentee_perc  + (1|county_name/basename) + (1|ethnicity), 
                weights = g20201103_reg_all_eth, data = missouri_data_clean_long_eth, family = binomial)
 summary(fit14)
 
@@ -391,11 +399,29 @@ party_comp_mo <-
 #           labelDependentVariables = c("Voter Turnout",
 #                                       "Voter Turnout"),
 #           file = "output/fit14_fit12.html")
-tab_model(fit14, fit12, file = "output/fit14_fit12.html", show.aic = TRUE, show.dev = TRUE, show.r2 = FALSE)
-tab_model(fit14, fit12, file = "output/fit14_fit12_original.html", transform = NULL, show.aic = TRUE, show.r2 = FALSE)
+tab_model(fit12, file = "output/fit12.html", show.aic = TRUE, show.dev = TRUE, show.r2 = FALSE)
+tab_model(fit12, file = "output/fit12_original.html", transform = NULL, show.aic = TRUE, show.r2 = FALSE)
+tab_model(fit12, file = "output/fit12.html", show.aic = TRUE, show.dev = TRUE, show.r2 = FALSE, 
+          dv.labels = c("2020 Voter Turnout"),
+          pred.labels = c("Intercept", "2020 Primary Voter Turnout", "2016 General Voter Turnout",
+                          "2012 General Voter Turnout", "County Seat Mask Mandate", "COVID Cases 7-Day Rolling Average",
+                          "Percentage Democrat", "Percentage Other Political Affiliation", "Percentage Ethnicity - Unknown", "Percentage Ethnicity - Hispanic",
+                          "Percentage Ethnicity - Black", "Percentage Ethnicity - East/South Asian", "Percentage Ethnicity - Other"))
+tab_model(fit12, file = "output/fit12_original.html", transform = NULL, show.aic = TRUE, show.r2 = FALSE, 
+          dv.labels = c("2020 Voter Turnout"),
+          pred.labels = c("Intercept", "2020 Primary Voter Turnout", "2016 General Voter Turnout",
+                          "2012 General Voter Turnout", "County Seat Mask Mandate", "COVID Cases 7-Day Rolling Average",
+                          "Democratic Party", "Other Political Affiliation", "Percentage Ethnicity - Unknown", "Percentage Ethnicity - Hispanic",
+                          "Percentage Ethnicity - Black", "Percentage Ethnicity - East/South Asian", "Percentage Ethnicity - Other"))
 
 
-
+tab_model(fit12_2, file = "output/fit12_2.html", show.aic = TRUE, show.dev = TRUE, show.r2 = FALSE,
+          dv.labels =  "2020 Voter Turnout", 
+          pred.labels = c("Intercept", "2020 Primary Voter Turnout", "2016 General Voter Turnout",
+                          "2012 General Voter Turnout", "County Seat Mask Mandate", "COVID Cases 7-Day Rolling Average",
+                          "Percentage Democrat", "Percentage Other Political Affiliation", "Percentage Ethnicity - Unknown", "Percentage Ethnicity - Hispanic",
+                          "Percentage Ethnicity - Black", "Percentage Ethnicity - East/South Asian", "Percentage Ethnicity - Other",
+                          "Percentage Age 25-34", "Percentage Age 35-54", "Percentage Age 55-64", "Percentage Age 65+"))
 
 
 

@@ -76,9 +76,16 @@ covid_data_clean <-
   select(-state) %>% 
   filter(date >= "2020-10-01",
          date <= "2020-11-03") %>% 
+  group_by(county) %>%
+  arrange(county, date) %>%
+  mutate(cases_rollmean_7 = rollmeanr(cases, k = 7, fill = NA),
+         deaths_rollmean_7 = rollmeanr(deaths, k = 7, fill = NA)) %>% 
+  ungroup() %>% 
+  filter(date >= "2020-11-01") %>% 
+  select(-c(cases, deaths)) %>%
   pivot_wider(names_from = date,
               names_glue = "{.value}_{date}",
-              values_from = c(cases, deaths)) %>% 
+              values_from = c(cases_rollmean_7, deaths_rollmean_7)) %>% 
   filter(is.na(fips) == FALSE) %>% 
   rename("county_name" = "county")
 
